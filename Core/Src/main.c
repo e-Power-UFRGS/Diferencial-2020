@@ -25,6 +25,7 @@
 /* USER CODE BEGIN Includes */
 #include "stdbool.h"
 #include "Differential_Code.c"
+#include "math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -56,14 +57,20 @@ UART_HandleTypeDef huart2;
 bool Ready_to_Drive_FLAG = false;
 bool Implausibility_Flag = false;
 bool Tractive_System_ON_FLAG = true; //flag para saber se o sistema de tracao esta ativo
-uint32_t SWA_value[10] = {0};
+uint32_t Brake_value[10] = {0};
 uint32_t APPS_value[10] = {0};//10 for the APPS1 sensor
 uint32_t APPS2_value[10] = {0};//10 for the APPS1 sensor
 uint32_t buffer[3];
+uint8_t L = 1.7;
+uint8_t D = 1.19;
 
+float Rotations[2] = {0};
 volatile float SWA_value_Average;
+volatile float Brake_value_Average;
 volatile float APPS1_value_Average;
 volatile float APPS2_value_Average;
+volatile float APPS_Result;
+volatile float SWA_Result;
 volatile uint32_t Right_Motor_Rotation;
 volatile uint32_t Left_Motor_Rotation;
 static FDCAN_RxHeaderTypeDef RxMessage;
@@ -77,8 +84,8 @@ static void MX_USART2_UART_Init(void);
 static void MX_FDCAN1_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_TIM1_Init(void);
-static void MX_ADC2_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_ADC2_Init(void);
 /* USER CODE BEGIN PFP */
 void (*Pos_pointer)();
 
@@ -128,8 +135,8 @@ int main(void)
   MX_FDCAN1_Init();
   MX_ADC1_Init();
   MX_TIM1_Init();
-  MX_ADC2_Init();
   MX_TIM2_Init();
+  MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
   Pos_pointer = Init_State;
 
@@ -355,6 +362,7 @@ static void MX_FDCAN1_Init(void)
 
   /* USER CODE BEGIN FDCAN1_Init 0 */
 
+
   /* USER CODE END FDCAN1_Init 0 */
 
   /* USER CODE BEGIN FDCAN1_Init 1 */
@@ -362,7 +370,7 @@ static void MX_FDCAN1_Init(void)
   /* USER CODE END FDCAN1_Init 1 */
   hfdcan1.Instance = FDCAN1;
   hfdcan1.Init.ClockDivider = FDCAN_CLOCK_DIV1;
-  hfdcan1.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
+  hfdcan1.Init.FrameFormat = FDCAN_FRAME_FD_NO_BRS;
   hfdcan1.Init.Mode = FDCAN_MODE_NORMAL;
   hfdcan1.Init.AutoRetransmission = DISABLE;
   hfdcan1.Init.TransmitPause = DISABLE;
@@ -383,6 +391,17 @@ static void MX_FDCAN1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN FDCAN1_Init 2 */
+
+
+	  TxMessage.Identifier = 0x111;
+	  TxMessage.IdType = FDCAN_STANDARD_ID;
+	  TxMessage.TxFrameType = FDCAN_DATA_FRAME;
+	  TxMessage.DataLength = FDCAN_DLC_BYTES_8;
+	  TxMessage.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+	  TxMessage.BitRateSwitch = FDCAN_BRS_ON;
+	  TxMessage.FDFormat = FDCAN_FD_CAN;
+	  TxMessage.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+	  TxMessage.MessageMarker = 0;
 
   /* USER CODE END FDCAN1_Init 2 */
 
@@ -549,6 +568,9 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, BrakeRangesOK_Pin|Buzzer_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : Brake_ON_OFF_Pin */
@@ -563,6 +585,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(Ready_to_Drive_Button_ON_OFF_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : BrakeRangesOK_Pin Buzzer_Pin */
+  GPIO_InitStruct.Pin = BrakeRangesOK_Pin|Buzzer_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   /*Configure GPIO pin : LD2_Pin */
   GPIO_InitStruct.Pin = LD2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -571,12 +600,23 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 3, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
 }
 
 /* USER CODE BEGIN 4 */
+
+void Ackermann_Equation(float APPS_Result, float SWA_Result, float *Rotations)
+{
+	uint32_t Actual_Rot = APPS_Result*300;
+
+	Rotations[0] = Actual_Rot*(1 + ((D/2)*tan(SWA_Result))/L);
+	Rotations[1] = Actual_Rot*(1 - ((D/2)*tan(SWA_Result))/L);
+}
+
+
+
 
 //Detects Ready to drive button interrupt (GPIO_PIN_7)
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
@@ -628,20 +668,16 @@ void Debouncing_Check()
 }
 
 
-
-void CAN_Filter_Config(void)
-{
-	//Start FDCAN
-	//HAL_FDCAN_Start(&hfdcan);
-
-	//FDCAN code
-}
-
 void Init_State(void)
 {
 	//Check if the Ready to Drive Mode Flag is true.
 	if(Ready_to_Drive_FLAG == true){
 		Pos_pointer = Comm_State;
+
+		//Turn on buzzer 2 seconds
+		HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_SET);
+		HAL_Delay(2000);
+		HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_RESET);
 	}
 	//HAL_Delay(1000);
 }
@@ -653,7 +689,7 @@ void Comm_State(void)
 	HAL_ADC_Start(&hadc1);
 	HAL_ADC_Start(&hadc2);
 	HAL_ADC_PollForConversion(&hadc2, 100);
-	SWA_value_Average += 0.1*HAL_ADC_GetValue(&hadc2);
+	Brake_value_Average += 0.1*HAL_ADC_GetValue(&hadc2);
 	//SWA recebe via CAN
 
 	HAL_ADC_PollForConversion(&hadc1, 100);
@@ -663,23 +699,56 @@ void Comm_State(void)
 	APPS2_value_Average += 0.1*HAL_ADC_GetValue(&hadc1);
 
 	HAL_ADC_Stop (&hadc1);
-	HAL_ADC_Start(&hadc2);
+	HAL_ADC_Stop(&hadc2);
 	}
 
 	//Transform to voltage
-	SWA_value_Average = (SWA_value_Average*3.3)/4095;
+    Brake_value_Average = (Brake_value_Average*3.3)/4095;
 	APPS1_value_Average = (APPS1_value_Average*3.3)/4095;
 	APPS2_value_Average = (APPS2_value_Average*3.3)/4095;
 
 	//APPS2_value_Average -= 0.5; //Value used to remove APPS2 offset
 
+
+ if(((APPS1_value_Average) == 0.0)||((APPS2_value_Average) == 0.0)||((APPS2_value_Average) > 3.29)||((APPS1_value_Average) > 3.29))
+		{
+			//If a short circuit or open circuit occurs... a flag is set
+		 	 	HAL_TIM_Base_Start_IT(&htim2);
+		}
+
  if(((APPS1_value_Average - APPS2_value_Average) > 0.1)||((APPS2_value_Average - APPS1_value_Average) > 0.1))
 	{
 		//If a deviation more than 10% occurs between the sensors... a flag is set
 	 	 	HAL_TIM_Base_Start_IT(&htim2);
-	 		//Pos_pointer = Error_State;
 	}
- 	 //add check de implausibilidade freio
+
+ APPS_Result = APPS1_value_Average + APPS2_value_Average;
+
+ if(((Brake_value_Average) == 0.0)||((Brake_value_Average) > 3.29))
+		{
+			//If a short circuit or open circuit occurs... a flag is set
+	 	 	 	 HAL_GPIO_WritePin(BrakeRangesOK_GPIO_Port, BrakeRangesOK_Pin, GPIO_PIN_RESET);
+		 	 	HAL_TIM_Base_Start_IT(&htim2);
+		}else{
+				HAL_GPIO_WritePin(BrakeRangesOK_GPIO_Port, BrakeRangesOK_Pin, GPIO_PIN_SET);
+		}
+
+ if(((Brake_value_Average) > 0.5)&&((APPS_Result) > 0.825))
+		{
+			//If brake is pressed and apps > 25%... a flag is set
+		 	 	HAL_TIM_Base_Start_IT(&htim2);
+		}
+
+ 	 //add formula calculo diferencial
+ 	 Ackermann_Equation(APPS_Result, SWA_Result, Rotations);
+
+
+ 	 HAL_FDCAN_Start(&hfdcan1);
+
+ 	 HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxMessage, &Rotations[0]);
+ 	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxMessage, &Rotations[1]);
+
+ 	 //HAL_FDCAN_Stop(&hfdcan1);
 }
 
 
@@ -695,6 +764,18 @@ void Implausibility_Check()
 			//If a deviation more than 10% occurs between the sensors... a flag is set
 		 		Pos_pointer = Error_State;
 		}
+
+	 if(((APPS1_value_Average) == 0.0)||((APPS2_value_Average) == 0.0)||((APPS2_value_Average) > 3.29)||((APPS1_value_Average) > 3.29))
+			{
+				//If a short circuit or open circuit occurs... a flag is set
+		 	 	 Pos_pointer = Error_State;
+			}
+
+	 if(((Brake_value_Average) == 0.0)||((Brake_value_Average) > 3.29))
+			{
+				//If a short circuit or open circuit occurs... a flag is set
+		 	 	 Pos_pointer = Error_State;
+			}
 }
 
 HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
@@ -709,6 +790,8 @@ HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     	  	  Implausibility_Check();
          }
 }
+
+
 
 /* USER CODE END 4 */
 

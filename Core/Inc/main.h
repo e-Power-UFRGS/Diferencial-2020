@@ -59,8 +59,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define SWA_Pin GPIO_PIN_0
-#define SWA_GPIO_Port GPIOA
+#define Brake_Pin GPIO_PIN_0
+#define Brake_GPIO_Port GPIOA
 #define APPS_1_Pin GPIO_PIN_1
 #define APPS_1_GPIO_Port GPIOA
 #define APPS_2_Pin GPIO_PIN_2
@@ -70,6 +70,10 @@ void Error_Handler(void);
 #define Ready_to_Drive_Button_ON_OFF_Pin GPIO_PIN_7
 #define Ready_to_Drive_Button_ON_OFF_GPIO_Port GPIOA
 #define Ready_to_Drive_Button_ON_OFF_EXTI_IRQn EXTI9_5_IRQn
+#define BrakeRangesOK_Pin GPIO_PIN_8
+#define BrakeRangesOK_GPIO_Port GPIOA
+#define Buzzer_Pin GPIO_PIN_9
+#define Buzzer_GPIO_Port GPIOA
 #define T_SWDIO_Pin GPIO_PIN_13
 #define T_SWDIO_GPIO_Port GPIOA
 #define T_SWCLK_Pin GPIO_PIN_14
