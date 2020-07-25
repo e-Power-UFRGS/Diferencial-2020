@@ -61,6 +61,9 @@ uint32_t Brake_value[10] = {0};
 uint32_t APPS_value[10] = {0};//10 for the APPS1 sensor
 uint32_t APPS2_value[10] = {0};//10 for the APPS1 sensor
 uint32_t buffer[3];
+uint8_t RxData[16];
+uint8_t RxDataExpected[] = {0x10, 0x32, 0x54, 0x76, 0x98, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00};
+uint8_t ErrorMessage[] = {0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00};
 uint8_t L = 1.7;
 uint8_t D = 1.19;
 
@@ -93,7 +96,7 @@ void (*Pos_pointer)();
 //prototypes:
 void Init_State(); //State after the turn-on, waiting for the ready to drive start;
 void Comm_State(); //State which the car is on the ready to drive mode;
-void Error_State(); //State which whenever error occours.
+//void Error_State(); //State which whenever error occours.
 
 void CAN_Filter_Config(void);
 /* USER CODE END PFP */
@@ -119,7 +122,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  HAL_FDCAN_Start(&hfdcan1);
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -667,19 +670,45 @@ void Debouncing_Check()
 	}
 }
 
+static uint32_t BufferCmp8b(uint8_t* pBuffer1, uint8_t* pBuffer2, uint16_t BufferLength)
+{
+  while(BufferLength--)
+  {
+    if(*pBuffer1 != *pBuffer2)
+    {
+      return 1;
+    }
+
+    pBuffer1++;
+    pBuffer2++;
+  }
+  return 0;
+}
 
 void Init_State(void)
 {
-	//Check if the Ready to Drive Mode Flag is true.
-	if(Ready_to_Drive_FLAG == true){
-		Pos_pointer = Comm_State;
 
-		//Turn on buzzer 2 seconds
-		HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_SET);
-		HAL_Delay(2000);
-		HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_RESET);
-	}
-	//HAL_Delay(1000);
+	 while (HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) < 2) {}
+
+	    /* Retreive Rx messages from RX FIFO0 */
+	    HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxMessage, RxData);
+	    HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxMessage, &RxData[8]);
+
+	    if (BufferCmp8b(RxDataExpected, RxData, 16) != 0)
+	      {
+	    	Pos_pointer = Error_Handler;
+	      }
+	    else
+	    {
+	    	Pos_pointer = Comm_State;
+
+	    	//Turn on buzzer 2 seconds
+	    	HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_SET);
+	    	HAL_Delay(2000);
+	    	HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_RESET);
+	    }
+
+	//Check if the Ready to Drive Mode Flag is true.
 }
 
 void Comm_State(void)
@@ -751,30 +780,24 @@ void Comm_State(void)
  	 //HAL_FDCAN_Stop(&hfdcan1);
 }
 
-
-void Error_State(void)
-{
-	//Send error message to the main ECU via CAN, shutdown the power to the motors
-}
-
 void Implausibility_Check()
 {
 	if(((APPS1_value_Average - APPS2_value_Average) > 0.1)||((APPS2_value_Average - APPS1_value_Average) > 0.1))
 		{
 			//If a deviation more than 10% occurs between the sensors... a flag is set
-		 		Pos_pointer = Error_State;
+		 		Pos_pointer = Error_Handler;
 		}
 
 	 if(((APPS1_value_Average) == 0.0)||((APPS2_value_Average) == 0.0)||((APPS2_value_Average) > 3.29)||((APPS1_value_Average) > 3.29))
 			{
 				//If a short circuit or open circuit occurs... a flag is set
-		 	 	 Pos_pointer = Error_State;
+		 	 	 Pos_pointer = Error_Handler;
 			}
 
 	 if(((Brake_value_Average) == 0.0)||((Brake_value_Average) > 3.29))
 			{
 				//If a short circuit or open circuit occurs... a flag is set
-		 	 	 Pos_pointer = Error_State;
+		 	 	 Pos_pointer = Error_Handler;
 			}
 }
 
@@ -804,6 +827,7 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
 
+	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxMessage, &ErrorMessage);
   /* USER CODE END Error_Handler_Debug */
 }
 
