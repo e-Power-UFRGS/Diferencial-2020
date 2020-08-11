@@ -26,6 +26,7 @@
 #include "stdbool.h"
 #include "Differential_Code.c"
 #include "math.h"
+#define ADC_TIMEOUT 100	//tempo de espera pela conversao ad
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -54,12 +55,12 @@ TIM_HandleTypeDef htim2;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-bool Ready_to_Drive_FLAG = false;
-bool Implausibility_Flag = false;
-bool Tractive_System_ON_FLAG = true; //flag para saber se o sistema de tracao esta ativo
+bool Ready_to_Drive_FLAG = false;		//flag para saber se o carro está pronto para dirigir
+bool Implausibility_Flag = false;		//flag para saber se a implausibilidade do pedal de freio ocorreu
+bool Tractive_System_ON_FLAG = true; 	//flag para saber se o sistema de tracao esta ativo
 uint32_t Brake_value[10] = {0};
-uint32_t APPS_value[10] = {0};//10 for the APPS1 sensor
-uint32_t APPS2_value[10] = {0};//10 for the APPS1 sensor
+uint32_t APPS_value[10] = {0};			//10 for the APPS1 sensor
+uint32_t APPS2_value[10] = {0};			//10 for the APPS1 sensor
 uint32_t buffer[3];
 uint8_t RxData[16];
 uint8_t RxDataExpected[] = {0x10, 0x32, 0x54, 0x76, 0x98, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00};
@@ -69,10 +70,10 @@ uint8_t D = 1.19;
 
 float Rotations[2] = {0};
 volatile float SWA_value_Average;
-volatile float Brake_value_Average;
-volatile float APPS1_value_Average;
-volatile float APPS2_value_Average;
-volatile float APPS_Result;
+volatile uint32_t Brake_value_Average;
+volatile uint32_t APPS1_value_Average;
+volatile uint32_t APPS2_value_Average;
+volatile uint32_t APPS_Result;
 volatile float SWA_Result;
 volatile uint32_t Right_Motor_Rotation;
 volatile uint32_t Left_Motor_Rotation;
@@ -395,16 +396,15 @@ static void MX_FDCAN1_Init(void)
   }
   /* USER CODE BEGIN FDCAN1_Init 2 */
 
-
-	  TxMessage.Identifier = 0x111;
-	  TxMessage.IdType = FDCAN_STANDARD_ID;
-	  TxMessage.TxFrameType = FDCAN_DATA_FRAME;
-	  TxMessage.DataLength = FDCAN_DLC_BYTES_8;
-	  TxMessage.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-	  TxMessage.BitRateSwitch = FDCAN_BRS_ON;
-	  TxMessage.FDFormat = FDCAN_FD_CAN;
-	  TxMessage.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-	  TxMessage.MessageMarker = 0;
+  TxMessage.Identifier = 0x111;
+  TxMessage.IdType = FDCAN_STANDARD_ID;
+  TxMessage.TxFrameType = FDCAN_DATA_FRAME;
+  TxMessage.DataLength = FDCAN_DLC_BYTES_8;
+  TxMessage.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+  TxMessage.BitRateSwitch = FDCAN_BRS_ON;
+  TxMessage.FDFormat = FDCAN_FD_CAN;
+  TxMessage.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+  TxMessage.MessageMarker = 0;
 
   /* USER CODE END FDCAN1_Init 2 */
 
@@ -688,25 +688,25 @@ static uint32_t BufferCmp8b(uint8_t* pBuffer1, uint8_t* pBuffer2, uint16_t Buffe
 void Init_State(void)
 {
 
-	 while (HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) < 2) {}
+	while (HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) < 2) {}
 
-	    /* Retreive Rx messages from RX FIFO0 */
-	    HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxMessage, RxData);
-	    HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxMessage, &RxData[8]);
+	/* Retreive Rx messages from RX FIFO0 */
+	HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxMessage, RxData);
+	HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxMessage, &RxData[8]);
 
-	    if (BufferCmp8b(RxDataExpected, RxData, 16) != 0)
-	      {
-	    	Pos_pointer = Error_Handler;
-	      }
-	    else
-	    {
-	    	Pos_pointer = Comm_State;
+	if (BufferCmp8b(RxDataExpected, RxData, 16) != 0)
+	{
+		Pos_pointer = Error_Handler;
+	}
+	else
+	{
+		Pos_pointer = Comm_State;
 
-	    	//Turn on buzzer 2 seconds
-	    	HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_SET);
-	    	HAL_Delay(2000);
-	    	HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_RESET);
-	    }
+		//Turn on buzzer 2 seconds
+		HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_SET);
+		HAL_Delay(2000);
+		HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_RESET);
+	}
 
 	//Check if the Ready to Drive Mode Flag is true.
 }
@@ -717,15 +717,22 @@ void Comm_State(void)
 	{
 	HAL_ADC_Start(&hadc1);
 	HAL_ADC_Start(&hadc2);
-	HAL_ADC_PollForConversion(&hadc2, 100);
-	Brake_value_Average += 0.1*HAL_ADC_GetValue(&hadc2);
+
+	if(HAL_ADC_PollForConversion(&hadc2, ADC_TIMEOUT) == HAL_OK)
+	{
+		Brake_value_Average += 0.1*HAL_ADC_GetValue(&hadc2);
+	}
 	//SWA recebe via CAN
 
-	HAL_ADC_PollForConversion(&hadc1, 100);
-	APPS1_value_Average += 0.1*HAL_ADC_GetValue(&hadc1);
+	if(HAL_ADC_PollForConversion(&hadc1, ADC_TIMEOUT) == HAL_OK)
+	{
+		APPS1_value_Average += 0.1*HAL_ADC_GetValue(&hadc1);
+	}
 
-	HAL_ADC_PollForConversion(&hadc1, 100);
-	APPS2_value_Average += 0.1*HAL_ADC_GetValue(&hadc1);
+	if(HAL_ADC_PollForConversion(&hadc1, ADC_TIMEOUT) == HAL_OK)
+	{
+		APPS2_value_Average += 0.1*HAL_ADC_GetValue(&hadc1);
+	}
 
 	HAL_ADC_Stop (&hadc1);
 	HAL_ADC_Stop(&hadc2);
@@ -739,34 +746,34 @@ void Comm_State(void)
 	//APPS2_value_Average -= 0.5; //Value used to remove APPS2 offset
 
 
- if(((APPS1_value_Average) == 0.0)||((APPS2_value_Average) == 0.0)||((APPS2_value_Average) > 3.29)||((APPS1_value_Average) > 3.29))
-		{
-			//If a short circuit or open circuit occurs... a flag is set
-		 	 	HAL_TIM_Base_Start_IT(&htim2);
-		}
-
- if(((APPS1_value_Average - APPS2_value_Average) > 0.1)||((APPS2_value_Average - APPS1_value_Average) > 0.1))
+	if(((APPS1_value_Average) == 0.0)||((APPS2_value_Average) == 0.0)||((APPS1_value_Average) > 3.29)||((APPS2_value_Average) > 3.29))
 	{
-		//If a deviation more than 10% occurs between the sensors... a flag is set
-	 	 	HAL_TIM_Base_Start_IT(&htim2);
+	//If a short circuit or open circuit occurs... a flag is set
+		 HAL_TIM_Base_Start_IT(&htim2);
 	}
 
- APPS_Result = APPS1_value_Average + APPS2_value_Average;
+	if(((APPS1_value_Average - APPS2_value_Average) > 0.1)||((APPS2_value_Average - APPS1_value_Average) > 0.1))
+	{
+	//If a deviation more than 10% occurs between the sensors... a flag is set
+	 	 HAL_TIM_Base_Start_IT(&htim2);
+	}
 
- if(((Brake_value_Average) == 0.0)||((Brake_value_Average) > 3.29))
-		{
-			//If a short circuit or open circuit occurs... a flag is set
-	 	 	 	 HAL_GPIO_WritePin(BrakeRangesOK_GPIO_Port, BrakeRangesOK_Pin, GPIO_PIN_RESET);
-		 	 	HAL_TIM_Base_Start_IT(&htim2);
-		}else{
-				HAL_GPIO_WritePin(BrakeRangesOK_GPIO_Port, BrakeRangesOK_Pin, GPIO_PIN_SET);
-		}
+	APPS_Result = APPS1_value_Average + APPS2_value_Average;
 
- if(((Brake_value_Average) > 0.5)&&((APPS_Result) > 0.825))
-		{
-			//If brake is pressed and apps > 25%... a flag is set
-		 	 	HAL_TIM_Base_Start_IT(&htim2);
-		}
+	if(((Brake_value_Average) == 0.0)||((Brake_value_Average) > 3.29))
+	{
+	//If a short circuit or open circuit occurs... a flag is set
+		HAL_GPIO_WritePin(BrakeRangesOK_GPIO_Port, BrakeRangesOK_Pin, GPIO_PIN_RESET);
+		HAL_TIM_Base_Start_IT(&htim2);
+	}else{
+		HAL_GPIO_WritePin(BrakeRangesOK_GPIO_Port, BrakeRangesOK_Pin, GPIO_PIN_SET);
+	}
+
+	if(((Brake_value_Average) > 0.5)&&((APPS_Result) > 0.825))
+	{
+	//If brake is pressed and apps > 25%... a flag is set
+		HAL_TIM_Base_Start_IT(&htim2);
+	}
 
  	 //add formula calculo diferencial
  	 Ackermann_Equation(APPS_Result, SWA_Result, Rotations);
@@ -775,7 +782,7 @@ void Comm_State(void)
  	 HAL_FDCAN_Start(&hfdcan1);
 
  	 HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxMessage, &Rotations[0]);
- 	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxMessage, &Rotations[1]);
+ 	 HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxMessage, &Rotations[1]);
 
  	 //HAL_FDCAN_Stop(&hfdcan1);
 }
@@ -783,35 +790,35 @@ void Comm_State(void)
 void Implausibility_Check()
 {
 	if(((APPS1_value_Average - APPS2_value_Average) > 0.1)||((APPS2_value_Average - APPS1_value_Average) > 0.1))
-		{
-			//If a deviation more than 10% occurs between the sensors... a flag is set
-		 		Pos_pointer = Error_Handler;
-		}
+	{
+	//If a deviation more than 10% occurs between the sensors... a flag is set
+		Pos_pointer = Error_Handler;
+	}
 
-	 if(((APPS1_value_Average) == 0.0)||((APPS2_value_Average) == 0.0)||((APPS2_value_Average) > 3.29)||((APPS1_value_Average) > 3.29))
-			{
-				//If a short circuit or open circuit occurs... a flag is set
-		 	 	 Pos_pointer = Error_Handler;
-			}
+	if(((APPS1_value_Average) == 0.0)||((APPS2_value_Average) == 0.0)||((APPS2_value_Average) > 3.29)||((APPS1_value_Average) > 3.29))
+	{
+	//If a short circuit or open circuit occurs... a flag is set
+		Pos_pointer = Error_Handler;
+	}
 
-	 if(((Brake_value_Average) == 0.0)||((Brake_value_Average) > 3.29))
-			{
-				//If a short circuit or open circuit occurs... a flag is set
-		 	 	 Pos_pointer = Error_Handler;
-			}
+	if(((Brake_value_Average) == 0.0)||((Brake_value_Average) > 3.29))
+	{
+	//If a short circuit or open circuit occurs... a flag is set
+		Pos_pointer = Error_Handler;
+	}
 }
 
 HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-     if(htim->Instance==TIM1)
-         {
-    	 	 Debouncing_Check();
-         }
+	if(htim->Instance==TIM1)
+    {
+    	 Debouncing_Check();
+    }
 
-      if(htim->Instance==TIM2)
-         {
-    	  	  Implausibility_Check();
-         }
+    if(htim->Instance==TIM2)
+    {
+    	Implausibility_Check();
+    }
 }
 
 
