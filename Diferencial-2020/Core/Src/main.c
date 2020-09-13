@@ -26,7 +26,6 @@
 #include "stdbool.h"
 #include "Differential_Code.c"
 #include "math.h"
-#define ADC_TIMEOUT 100	//tempo de espera pela conversao ad
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,18 +48,20 @@ ADC_HandleTypeDef hadc2;
 
 FDCAN_HandleTypeDef hfdcan1;
 
+IWDG_HandleTypeDef hiwdg;
+
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-bool Ready_to_Drive_FLAG = false;		//flag para saber se o carro está pronto para dirigir
-bool Implausibility_Flag = false;		//flag para saber se a implausibilidade do pedal de freio ocorreu
-bool Tractive_System_ON_FLAG = true; 	//flag para saber se o sistema de tracao esta ativo
+bool Ready_to_Drive_FLAG = false;
+bool Implausibility_Flag = false;
+bool Tractive_System_ON_FLAG = true; //flag para saber se o sistema de tracao esta ativo
 uint32_t Brake_value[10] = {0};
-uint32_t APPS_value[10] = {0};			//10 for the APPS1 sensor
-uint32_t APPS2_value[10] = {0};			//10 for the APPS1 sensor
+uint32_t APPS_value[10] = {0};//10 for the APPS1 sensor
+uint32_t APPS2_value[10] = {0};//10 for the APPS1 sensor
 uint32_t buffer[3];
 uint8_t RxData[16];
 uint8_t RxDataExpected[] = {0x10, 0x32, 0x54, 0x76, 0x98, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00};
@@ -70,10 +71,10 @@ uint8_t D = 1.19;
 
 float Rotations[2] = {0};
 volatile float SWA_value_Average;
-volatile uint32_t Brake_value_Average;
-volatile uint32_t APPS1_value_Average;
-volatile uint32_t APPS2_value_Average;
-volatile uint32_t APPS_Result;
+volatile float Brake_value_Average;
+volatile float APPS1_value_Average;
+volatile float APPS2_value_Average;
+volatile float APPS_Result;
 volatile float SWA_Result;
 volatile uint32_t Right_Motor_Rotation;
 volatile uint32_t Left_Motor_Rotation;
@@ -90,6 +91,7 @@ static void MX_ADC1_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_ADC2_Init(void);
+static void MX_IWDG_Init(void);
 /* USER CODE BEGIN PFP */
 void (*Pos_pointer)();
 
@@ -141,6 +143,7 @@ int main(void)
   MX_TIM1_Init();
   MX_TIM2_Init();
   MX_ADC2_Init();
+  MX_IWDG_Init();
   /* USER CODE BEGIN 2 */
   Pos_pointer = Init_State;
 
@@ -158,11 +161,9 @@ int main(void)
   while (1)
   {
 	  (*Pos_pointer)();
-	 // HAL_Delay(500);
-	  //debug:
-	 // HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-	  //debug:
-	  Tractive_System_ON_FLAG = true; //System must wait for this CAN command.
+
+	  HAL_Delay(20);
+	  HAL_IWDG_Refresh(&hiwdg); //Watchdog refresh
 
     /* USER CODE END WHILE */
 
@@ -186,9 +187,10 @@ void SystemClock_Config(void)
   HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
   /** Initializes the CPU, AHB and APB busses clocks 
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV4;
@@ -396,17 +398,47 @@ static void MX_FDCAN1_Init(void)
   }
   /* USER CODE BEGIN FDCAN1_Init 2 */
 
-  TxMessage.Identifier = 0x111;
-  TxMessage.IdType = FDCAN_STANDARD_ID;
-  TxMessage.TxFrameType = FDCAN_DATA_FRAME;
-  TxMessage.DataLength = FDCAN_DLC_BYTES_8;
-  TxMessage.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-  TxMessage.BitRateSwitch = FDCAN_BRS_ON;
-  TxMessage.FDFormat = FDCAN_FD_CAN;
-  TxMessage.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-  TxMessage.MessageMarker = 0;
+
+	  TxMessage.Identifier = 0x111;
+	  TxMessage.IdType = FDCAN_STANDARD_ID;
+	  TxMessage.TxFrameType = FDCAN_DATA_FRAME;
+	  TxMessage.DataLength = FDCAN_DLC_BYTES_8;
+	  TxMessage.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+	  TxMessage.BitRateSwitch = FDCAN_BRS_ON;
+	  TxMessage.FDFormat = FDCAN_FD_CAN;
+	  TxMessage.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+	  TxMessage.MessageMarker = 0;
 
   /* USER CODE END FDCAN1_Init 2 */
+
+}
+
+/**
+  * @brief IWDG Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_IWDG_Init(void)
+{
+
+  /* USER CODE BEGIN IWDG_Init 0 */
+
+  /* USER CODE END IWDG_Init 0 */
+
+  /* USER CODE BEGIN IWDG_Init 1 */
+
+  /* USER CODE END IWDG_Init 1 */
+  hiwdg.Instance = IWDG;
+  hiwdg.Init.Prescaler = IWDG_PRESCALER_8;
+  hiwdg.Init.Window = 4095;
+  hiwdg.Init.Reload = 4095;
+  if (HAL_IWDG_Init(&hiwdg) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN IWDG_Init 2 */
+
+  /* USER CODE END IWDG_Init 2 */
 
 }
 
@@ -574,7 +606,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, BrakeRangesOK_Pin|Buzzer_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, LED_2_Pin|LED_1_Pin|LD2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : Brake_ON_OFF_Pin */
   GPIO_InitStruct.Pin = Brake_ON_OFF_Pin;
@@ -595,12 +627,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LD2_Pin */
-  GPIO_InitStruct.Pin = LD2_Pin;
+  /*Configure GPIO pin : LED_3_Pin */
+  GPIO_InitStruct.Pin = LED_3_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(LED_3_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : LED_2_Pin LED_1_Pin LD2_Pin */
+  GPIO_InitStruct.Pin = LED_2_Pin|LED_1_Pin|LD2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
   HAL_NVIC_SetPriority(EXTI9_5_IRQn, 3, 0);
@@ -610,6 +648,7 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+//Function to calculate the rotation based on the APPS pressure and the SWA angle
 void Ackermann_Equation(float APPS_Result, float SWA_Result, float *Rotations)
 {
 	uint32_t Actual_Rot = APPS_Result*300;
@@ -631,22 +670,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
 	} else{
 		__NOP();
-		//(*Pos_pointer)();
+
 	}
 
-	//debug
-	/*
-	if((GPIO_Pin == GPIO_PIN_7))
-	{
-		HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
-		HAL_TIM_Base_Start_IT(&htim1);
-	}else{
-		__NOP();
-		//(*Pos_pointer)();
-	}
-	//debug
-	 *
-	 */
 }
 
 
@@ -654,13 +680,9 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 void Debouncing_Check()
 {
 
-/*
+
   //If Ready to Drive button and brake remain pressed..Set the Ready to Drive Mode flag to True.
-	if((HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_7) == GPIO_PIN_SET) && (HAL_GPIO_ReadPin(Brake_ON_OFF_GPIO_Port,Brake_ON_OFF_Pin) == GPIO_PIN_SET) ){
-		Ready_to_Drive_FLAG = true;
-		HAL_TIM_Base_Stop_IT(&htim1);
-	}
-	*/
+
   if((HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_7) == GPIO_PIN_SET) && (HAL_GPIO_ReadPin(Brake_ON_OFF_GPIO_Port,Brake_ON_OFF_Pin) == GPIO_PIN_SET))
 	{
 	  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
@@ -687,52 +709,54 @@ static uint32_t BufferCmp8b(uint8_t* pBuffer1, uint8_t* pBuffer2, uint16_t Buffe
 
 void Init_State(void)
 {
+		//Blinks the init state indicator LED
+		HAL_GPIO_TogglePin(LED_1_GPIO_Port, LED_1_Pin);
 
-	while (HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) < 2) {}
+	 while (HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) < 2) {}
 
-	/* Retreive Rx messages from RX FIFO0 */
-	HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxMessage, RxData);
-	HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxMessage, &RxData[8]);
+	    /* Receive Rx messages from RX FIFO0 */
+	    HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxMessage, RxData);
+	    HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxMessage, &RxData[8]);
 
-	if (BufferCmp8b(RxDataExpected, RxData, 16) != 0)
-	{
-		Pos_pointer = Error_Handler;
-	}
-	else
-	{
-		Pos_pointer = Comm_State;
+	    //Compare the received data (CAN) with the reference
+	    if ((BufferCmp8b(RxDataExpected, RxData, 16) != 0) || (Ready_to_Drive_FLAG == false))
+	      {
+	    	Pos_pointer = Init_State;
+	      }
+	    else if (Ready_to_Drive_FLAG == true)
+	    {
+	    	Pos_pointer = Comm_State;
 
-		//Turn on buzzer 2 seconds
-		HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_SET);
-		HAL_Delay(2000);
-		HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_RESET);
-	}
+
+	    	//Turn on buzzer for 2 seconds
+	    	HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_SET);
+	    	HAL_Delay(2000);
+	    	HAL_GPIO_WritePin(Buzzer_GPIO_Port, Buzzer_Pin, GPIO_PIN_RESET);
+	    }
 
 	//Check if the Ready to Drive Mode Flag is true.
 }
 
 void Comm_State(void)
 {
+
+	//Blinks the comm state indicator LED
+	HAL_GPIO_TogglePin(LED_2_GPIO_Port, LED_2_Pin);
+
+	//Start the ADC's for reading the APPS's and SWA values
 	for( int i=0; i <10; i++)
 	{
 	HAL_ADC_Start(&hadc1);
 	HAL_ADC_Start(&hadc2);
+	HAL_ADC_PollForConversion(&hadc2, 100);
+	Brake_value_Average += 0.1*HAL_ADC_GetValue(&hadc2);
 
-	if(HAL_ADC_PollForConversion(&hadc2, ADC_TIMEOUT) == HAL_OK)
-	{
-		Brake_value_Average += 0.1*HAL_ADC_GetValue(&hadc2);
-	}
-	//SWA recebe via CAN
 
-	if(HAL_ADC_PollForConversion(&hadc1, ADC_TIMEOUT) == HAL_OK)
-	{
-		APPS1_value_Average += 0.1*HAL_ADC_GetValue(&hadc1);
-	}
+	HAL_ADC_PollForConversion(&hadc1, 100);
+	APPS1_value_Average += 0.1*HAL_ADC_GetValue(&hadc1);
 
-	if(HAL_ADC_PollForConversion(&hadc1, ADC_TIMEOUT) == HAL_OK)
-	{
-		APPS2_value_Average += 0.1*HAL_ADC_GetValue(&hadc1);
-	}
+	HAL_ADC_PollForConversion(&hadc1, 100);
+	APPS2_value_Average += 0.1*HAL_ADC_GetValue(&hadc1);
 
 	HAL_ADC_Stop (&hadc1);
 	HAL_ADC_Stop(&hadc2);
@@ -743,46 +767,49 @@ void Comm_State(void)
 	APPS1_value_Average = (APPS1_value_Average*3.3)/4095;
 	APPS2_value_Average = (APPS2_value_Average*3.3)/4095;
 
-	//APPS2_value_Average -= 0.5; //Value used to remove APPS2 offset
+	APPS2_value_Average = APPS2_value_Average/3; //Value used to remove APPS2 gain
 
 
-	if(((APPS1_value_Average) == 0.0)||((APPS2_value_Average) == 0.0)||((APPS1_value_Average) > 3.29)||((APPS2_value_Average) > 3.29))
+ if(((APPS1_value_Average) == 0.0)||((APPS2_value_Average) == 0.0)||((APPS2_value_Average) > 3.29)||((APPS1_value_Average) > 3.29))
+		{
+			//If a short circuit or open circuit occurs... a flag is set
+		 	 	HAL_TIM_Base_Start_IT(&htim2);
+		}
+
+ if(((APPS1_value_Average - APPS2_value_Average) > 0.1)||((APPS2_value_Average - APPS1_value_Average) > 0.1))
 	{
-	//If a short circuit or open circuit occurs... a flag is set
-		 HAL_TIM_Base_Start_IT(&htim2);
+		//If a deviation more than 10% occurs between the sensors... a flag is set
+	 	 	HAL_TIM_Base_Start_IT(&htim2);
 	}
 
-	if(((APPS1_value_Average - APPS2_value_Average) > 0.1)||((APPS2_value_Average - APPS1_value_Average) > 0.1))
-	{
-	//If a deviation more than 10% occurs between the sensors... a flag is set
-	 	 HAL_TIM_Base_Start_IT(&htim2);
-	}
+ APPS_Result = APPS1_value_Average + APPS2_value_Average;
 
-	APPS_Result = APPS1_value_Average + APPS2_value_Average;
+ if(((Brake_value_Average) == 0.0)||((Brake_value_Average) > 3.29))
+		{
+			//If a short circuit or open circuit occurs... a flag is set
+	 	 	 	 //GPIO to send the Brake On/Off signal to BSPD
+	 	 	 	 HAL_GPIO_WritePin(BrakeRangesOK_GPIO_Port, BrakeRangesOK_Pin, GPIO_PIN_RESET);
+		 	 	HAL_TIM_Base_Start_IT(&htim2);
+		}else if(Brake_value_Average > 3){
+				HAL_GPIO_WritePin(BrakeRangesOK_GPIO_Port, BrakeRangesOK_Pin, GPIO_PIN_SET);
+		}else{
+			HAL_GPIO_WritePin(BrakeRangesOK_GPIO_Port, BrakeRangesOK_Pin, GPIO_PIN_RESET);
+		}
 
-	if(((Brake_value_Average) == 0.0)||((Brake_value_Average) > 3.29))
-	{
-	//If a short circuit or open circuit occurs... a flag is set
-		HAL_GPIO_WritePin(BrakeRangesOK_GPIO_Port, BrakeRangesOK_Pin, GPIO_PIN_RESET);
-		HAL_TIM_Base_Start_IT(&htim2);
-	}else{
-		HAL_GPIO_WritePin(BrakeRangesOK_GPIO_Port, BrakeRangesOK_Pin, GPIO_PIN_SET);
-	}
+ if(((Brake_value_Average) > 0.5)&&((APPS_Result) > 0.825))
+		{
+			//If brake is pressed and apps > 25%... a flag is set
+		 	 	HAL_TIM_Base_Start_IT(&htim2);
+		}
 
-	if(((Brake_value_Average) > 0.5)&&((APPS_Result) > 0.825))
-	{
-	//If brake is pressed and apps > 25%... a flag is set
-		HAL_TIM_Base_Start_IT(&htim2);
-	}
 
- 	 //add formula calculo diferencial
  	 Ackermann_Equation(APPS_Result, SWA_Result, Rotations);
 
 
  	 HAL_FDCAN_Start(&hfdcan1);
 
  	 HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxMessage, &Rotations[0]);
- 	 HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxMessage, &Rotations[1]);
+ 	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxMessage, &Rotations[1]);
 
  	 //HAL_FDCAN_Stop(&hfdcan1);
 }
@@ -790,35 +817,35 @@ void Comm_State(void)
 void Implausibility_Check()
 {
 	if(((APPS1_value_Average - APPS2_value_Average) > 0.1)||((APPS2_value_Average - APPS1_value_Average) > 0.1))
-	{
-	//If a deviation more than 10% occurs between the sensors... a flag is set
-		Pos_pointer = Error_Handler;
-	}
+		{
+			//If a deviation more than 10% occurs between the sensors... a flag is set
+		 		Pos_pointer = Error_Handler;
+		}
 
-	if(((APPS1_value_Average) == 0.0)||((APPS2_value_Average) == 0.0)||((APPS2_value_Average) > 3.29)||((APPS1_value_Average) > 3.29))
-	{
-	//If a short circuit or open circuit occurs... a flag is set
-		Pos_pointer = Error_Handler;
-	}
+	 if(((APPS1_value_Average) == 0.0)||((APPS2_value_Average) == 0.0)||((APPS2_value_Average) > 3.29)||((APPS1_value_Average) > 3.29))
+			{
+				//If a short circuit or open circuit occurs... a flag is set
+		 	 	 Pos_pointer = Error_Handler;
+			}
 
-	if(((Brake_value_Average) == 0.0)||((Brake_value_Average) > 3.29))
-	{
-	//If a short circuit or open circuit occurs... a flag is set
-		Pos_pointer = Error_Handler;
-	}
+	 if(((Brake_value_Average) == 0.0)||((Brake_value_Average) > 3.29))
+			{
+				//If a short circuit or open circuit occurs... a flag is set
+		 	 	 Pos_pointer = Error_Handler;
+			}
 }
 
 HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-	if(htim->Instance==TIM1)
-    {
-    	 Debouncing_Check();
-    }
+     if(htim->Instance==TIM1)
+         {
+    	 	 Debouncing_Check();
+         }
 
-    if(htim->Instance==TIM2)
-    {
-    	Implausibility_Check();
-    }
+      if(htim->Instance==TIM2)
+         {
+    	  	  Implausibility_Check();
+         }
 }
 
 
@@ -833,6 +860,9 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
+
+	//Blinks the error state indicator LED
+	HAL_GPIO_TogglePin(LED_3_GPIO_Port, LED_3_Pin);
 
 	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxMessage, &ErrorMessage);
   /* USER CODE END Error_Handler_Debug */
